@@ -36,6 +36,18 @@ public class EvilManController : MonoBehaviour
     private Rigidbody rb; // Evil Man's Rigidbody
     [Header("Positioning")]
     [SerializeField] private float landingDistanceFromPlayer = 3f;
+    [Header("VFX")]
+    public ParticleSystem landingVFX; // NEW: Landing effect when evil man hits the ground
+    public Transform playerHitPoint;
+
+    [Header("Audio")]  
+    public AudioSource landingSound; // NEW: Optional landing sound
+    [Header("Final Attack VFX")]
+    public ParticleSystem finalStrikeVFX;
+    public float finalVFXTravelTime = 0.6f; // how long it takes to reach the player
+    public float finalVFXOffsetY = 1.5f;    // vertical offset (center height)
+    [Header("Player Hit Reaction VFX")]
+    public ParticleSystem playerDamageEndVFX; // VFX that plays when player's hit animation finishes
 
     void Start()
     {
@@ -49,16 +61,34 @@ public class EvilManController : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         if (rb != null)
             rb.isKinematic = true;
+        HideDialogueText();
     }
 
     public void StartDialogue()
     {
         if (isPerformingSequence) return;
+        ShowDialogueText();
 
         Debug.Log("EvilMan: Starting dialogue sequence");
         StartCoroutine(FullCombatSequence());
     }
+    private void ShowDialogueText()
+    {
+        if (dialogueText != null)
+        {
+            dialogueText.gameObject.SetActive(true);
+            Debug.Log("Dialogue text shown");
+        }
+    }
 
+    private void HideDialogueText()
+    {
+        if (dialogueText != null)
+        {
+            dialogueText.gameObject.SetActive(false);
+            Debug.Log("Dialogue text hidden");
+        }
+    }
     private IEnumerator FullCombatSequence()
     {
         isPerformingSequence = true;
@@ -82,7 +112,7 @@ public class EvilManController : MonoBehaviour
         // Step 2: Dialogue
         Debug.Log("EvilMan: Starting dialogue");
         yield return StartCoroutine(SafeDialogue());
-
+        ShowDialogueText();
         // Step 3: Rapid combat sequence
         Debug.Log("EvilMan: Starting rapid combat sequence");
         yield return StartCoroutine(RapidCombatSequence());
@@ -185,6 +215,9 @@ public class EvilManController : MonoBehaviour
 
             // Face player again after landing
             transform.LookAt(new Vector3(player.position.x, transform.position.y, player.position.z));
+            SafePlayParticleSystemAt(landingVFX, transform.position, Quaternion.identity);
+            SafePlayAudio(landingSound);
+            SafeCameraShake(0.4f, 0.3f);
 
             if (animator != null)
                 animator.applyRootMotion = true;
@@ -196,14 +229,22 @@ public class EvilManController : MonoBehaviour
                 player.rotation = Quaternion.LookRotation(lookDir);
         }
 
-        // Add impact camera shake
-        SafeCameraShake(0.4f, 0.3f);
 
         // Small delay for dramatic timing
         yield return new WaitForSeconds(0.5f);
     }
 
+    private void SafePlayParticleSystemAt(ParticleSystem prefab, Vector3 position, Quaternion rotation)
+    {
+        if (prefab == null) return;
 
+        // If it's a prefab, instantiate and play it at the given position
+        ParticleSystem ps = Instantiate(prefab, position, rotation);
+        ps.Play();
+
+        // Clean up automatically after it finishes
+        Destroy(ps.gameObject, ps.main.duration + ps.main.startLifetime.constantMax);
+    }
 
     private IEnumerator SafeDialogue()
     {
@@ -232,7 +273,7 @@ public class EvilManController : MonoBehaviour
         // Soul absorption
         SafePlayParticleSystem(soulAbsorbFX);
         SafePlayAudio(soulAbsorbSound);
-        yield return new WaitForSeconds(2f);
+        yield return new WaitForSeconds(3.5f);
     }
 
     private IEnumerator RapidCombatSequence()
@@ -288,12 +329,16 @@ public class EvilManController : MonoBehaviour
         SafeTriggerAnimation(punchTrigger);
 
         // Small timing so the hit lines up with the animation (tweak if needed)
-        yield return new WaitForSeconds(0.06f);
+        yield return new WaitForSeconds(0.1f);
 
         // Trigger the player's damage animation and effects
         SafeTriggerPlayerAnimation(playerDamage);
+        StartCoroutine(PlayPlayerDamageVFXAfterAnimation(playerDamage)); // <-- added
         SafePlayAudio(punchSound);
-        SafePlayParticleSystem(punchVFX);
+        if (playerHitPoint != null)
+            SafePlayParticleSystemAt(punchVFX, playerHitPoint.position, playerHitPoint.rotation);
+        else
+            SafePlayParticleSystemAt(punchVFX, player.position + Vector3.up * 1.2f, Quaternion.identity);
         SafePlayRandomAdditionalVFX();
 
         // Camera shake for impact
@@ -327,8 +372,12 @@ public class EvilManController : MonoBehaviour
         }
 
         // Final strike
+        StartCoroutine(PlayFinalStrikeVFX());
+
         SafeTriggerAnimation("Punch2");
+
         SafeTriggerPlayerAnimation("Take Damage 2");
+
         SafePlayAudio(punchSound);
         SafePlayParticleSystem(punchVFX);
         SafePlayRandomAdditionalVFX();
@@ -373,6 +422,149 @@ public class EvilManController : MonoBehaviour
 
         // Let the player fly off dramatically
         yield return new WaitForSeconds(3f);
+        // Fade to black after the final hit
+        if (UIManager.Instance != null)
+        {
+            UIManager.Instance.FadeOutAndEnd();
+        }
+
+    }
+    private IEnumerator SoulAbsorbSequence()
+    {
+        if (player == null || soulAbsorbFX == null)
+            yield break;
+
+        Vector3 playerCenter = player.position + Vector3.up * 1.2f;
+        Vector3 evilManCenter = transform.position + Vector3.up * 1.5f;
+
+        // Play sound once
+        SafePlayAudio(soulAbsorbSound);
+
+        // Spawn main burst at EvilMan’s chest
+        SafePlayParticleSystemAt(soulAbsorbFX, evilManCenter, Quaternion.identity);
+
+        // Spawn multiple soul wisps traveling from player → EvilMan
+        int wispCount = 5;
+        for (int i = 0; i < wispCount; i++)
+        {
+            Vector3 randomOffset = Random.insideUnitSphere * 2f;
+            randomOffset.y = Mathf.Abs(randomOffset.y); // keep above ground
+
+            Vector3 start = playerCenter + randomOffset;
+            Vector3 end = evilManCenter + Random.insideUnitSphere * 0.3f;
+
+            // Each wisp flies in and then orbits around EvilMan
+            StartCoroutine(MoveAndOrbitSoulWisp(start, end, transform, 0.9f + Random.Range(-0.2f, 0.2f)));
+            yield return new WaitForSeconds(0.05f);
+        }
+
+        yield return new WaitForSeconds(2f);
+    }
+    private IEnumerator MoveAndOrbitSoulWisp(Vector3 start, Vector3 end, Transform target, float travelTime)
+    {
+        if (soulAbsorbFX == null) yield break;
+
+        // Spawn wisp particle
+        ParticleSystem wisp = Instantiate(soulAbsorbFX, start, Quaternion.identity);
+        wisp.Play();
+
+        // 1️⃣ Travel from player → EvilMan
+        float elapsed = 0f;
+        while (elapsed < travelTime)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / travelTime);
+            float smooth = Mathf.SmoothStep(0, 1, t);
+            Vector3 mid = Vector3.Lerp(start, end, smooth) + Vector3.up * Mathf.Sin(smooth * Mathf.PI) * 0.3f;
+            wisp.transform.position = mid;
+            yield return null;
+        }
+
+        // 2️⃣ Orbit around EvilMan’s body
+        float orbitDuration = 1.5f;
+        float orbitSpeed = 360f; // degrees per second
+        float orbitRadius = 1.2f;
+
+        float angleOffset = Random.Range(0f, 360f);
+        float orbitElapsed = 0f;
+
+        while (orbitElapsed < orbitDuration && target != null)
+        {
+            orbitElapsed += Time.deltaTime;
+            angleOffset += orbitSpeed * Time.deltaTime;
+
+            float radians = angleOffset * Mathf.Deg2Rad;
+            Vector3 orbitPos = target.position
+                + Vector3.up * 1.5f
+                + new Vector3(Mathf.Cos(radians), Mathf.Sin(radians) * 0.3f, Mathf.Sin(radians)) * orbitRadius;
+
+            wisp.transform.position = orbitPos;
+            yield return null;
+        }
+
+        // 3️⃣ Fade out and cleanup
+        Destroy(wisp.gameObject, wisp.main.duration + wisp.main.startLifetime.constantMax);
+    }
+
+    private IEnumerator MoveSoulWisp(Vector3 start, Vector3 end, float duration)
+    {
+        if (soulAbsorbFX == null) yield break;
+
+        ParticleSystem wisp = Instantiate(soulAbsorbFX, start, Quaternion.identity);
+        wisp.Play();
+
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+            float smooth = Mathf.SmoothStep(0, 1, t);
+
+            // Optional curve upward slightly
+            Vector3 mid = Vector3.Lerp(start, end, smooth) + Vector3.up * Mathf.Sin(smooth * Mathf.PI) * 0.5f;
+            wisp.transform.position = mid;
+            yield return null;
+        }
+
+        Destroy(wisp.gameObject, wisp.main.duration + wisp.main.startLifetime.constantMax);
+    }
+
+    private IEnumerator PlayFinalStrikeVFX()
+    {
+        if (finalStrikeVFX == null || player == null)
+            yield break;
+
+        // Start from EvilMan toward player
+        Vector3 startPos = transform.position + Vector3.up * finalVFXOffsetY;
+        Vector3 endPos = player.position + Vector3.up * finalVFXOffsetY;
+
+        // Make the VFX face the travel direction
+        Quaternion lookRot = Quaternion.LookRotation((endPos - startPos).normalized);
+        ParticleSystem vfx = Instantiate(finalStrikeVFX, startPos, lookRot);
+        vfx.Play();
+
+        float elapsed = 0f;
+        while (elapsed < finalVFXTravelTime)
+        {
+            if (vfx == null) yield break;
+
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / finalVFXTravelTime);
+
+            // Optional: ease-in-out movement for smoother feel
+            float smoothT = Mathf.SmoothStep(0, 1, t);
+
+            // Move forward toward player
+            vfx.transform.position = Vector3.Lerp(startPos, endPos, smoothT);
+
+            yield return null;
+        }
+
+        // Small burst when it reaches the player
+        SafePlayParticleSystemAt(punchVFX, endPos, Quaternion.identity);
+
+        // Clean up
+        Destroy(vfx.gameObject, vfx.main.duration + vfx.main.startLifetime.constantMax);
     }
 
 
@@ -427,7 +619,7 @@ public class EvilManController : MonoBehaviour
     {
         if (playerAnimator != null && playerAnimator.enabled && !string.IsNullOrEmpty(animationName))
         {
-            playerAnimator.CrossFade(animationName, 0.05f);
+            playerAnimator.CrossFade(animationName, 0.10f);
             Debug.Log($"Player animation triggered: {animationName}");
         }
     }
@@ -436,10 +628,13 @@ public class EvilManController : MonoBehaviour
     {
         if (animator != null && !string.IsNullOrEmpty(triggerName))
         {
+            animator.ResetTrigger("Punch1");
+            animator.ResetTrigger("Punch2");
             animator.SetTrigger(triggerName);
             Debug.Log($"Evil man animation triggered: {triggerName}");
         }
     }
+
 
     private void SafePlayAudio(AudioSource audioSource)
     {
@@ -451,10 +646,51 @@ public class EvilManController : MonoBehaviour
 
     private void SafePlayParticleSystem(ParticleSystem particles)
     {
-        if (particles != null)
+        if (particles == null) return;
+
+        // If it's a prefab, instantiate it at runtime
+        if (!particles.gameObject.scene.IsValid())
+        {
+            ParticleSystem newFX = Instantiate(particles, transform.position, Quaternion.identity);
+            newFX.Play();
+            Destroy(newFX.gameObject, newFX.main.duration + newFX.main.startLifetime.constantMax);
+        }
+        else
         {
             particles.Play();
         }
+    }
+
+    private IEnumerator PlayPlayerDamageVFXAfterAnimation(string animationName)
+    {
+        if (playerAnimator == null || playerDamageEndVFX == null)
+            yield break;
+
+        // Get the length of the animation clip
+        float clipLength = 0.5f; // fallback default
+
+        RuntimeAnimatorController controller = playerAnimator.runtimeAnimatorController;
+        if (controller != null)
+        {
+            foreach (var clip in controller.animationClips)
+            {
+                if (clip.name == animationName)
+                {
+                    clipLength = clip.length;
+                    break;
+                }
+            }
+        }
+
+        // Wait until the animation roughly finishes
+        yield return new WaitForSeconds(clipLength * 0.9f);
+
+        // Spawn the VFX at the player's hit point or torso
+        Vector3 spawnPos = playerHitPoint != null
+            ? playerHitPoint.position
+            : player.position + Vector3.up * 1.2f;
+
+        SafePlayParticleSystemAt(playerDamageEndVFX, spawnPos, Quaternion.identity);
     }
 
     private void SafeSetDialogueText(string text)

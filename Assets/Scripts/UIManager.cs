@@ -6,6 +6,17 @@ public class UIManager : MonoBehaviour
 {
     public static UIManager Instance;
     public Image fadePanel;
+    private void Start()
+    {
+        // Ensure fade panel starts fully transparent (not visible)
+        if (fadePanel != null)
+        {
+            Color c = fadePanel.color;
+            c.a = 0f;
+            fadePanel.color = c;
+            fadePanel.gameObject.SetActive(false);
+        }
+    }
 
     private void Awake()
     {
@@ -15,8 +26,20 @@ public class UIManager : MonoBehaviour
             Destroy(gameObject);
     }
 
-    public void FadeIn() => StartCoroutine(FadeRoutine(1, 1f));
-    public void FadeOutAndEnd() => StartCoroutine(FadeRoutine(0, 1f, true));
+    public void FadeIn()
+    {
+        if (fadePanel != null)
+            fadePanel.gameObject.SetActive(true);
+        StartCoroutine(FadeRoutine(1, 1f));
+    }
+
+    public void FadeOutAndEnd()
+    {
+        if (fadePanel != null)
+            fadePanel.gameObject.SetActive(true);
+        StartCoroutine(FadeRoutine(1, 1f, true));
+    }
+
 
     private IEnumerator FadeRoutine(float targetAlpha, float duration, bool endGame = false)
     {
