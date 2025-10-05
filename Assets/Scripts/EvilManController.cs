@@ -24,7 +24,7 @@ public class EvilManController : MonoBehaviour
     public AudioSource soulAbsorbSound;
 
     [Header("Combat Settings")]
-    public float punchDistance = 2.5f; // Distance in front of player
+    public float punchDistance = 0.5f; // Distance in front of player
     public float knockbackForce = 25f; // horizontal
     public float knockbackUpForce = 35f; // vertical
     public float rapidPunchDelay = 0.3f;
@@ -33,6 +33,9 @@ public class EvilManController : MonoBehaviour
     private AnimationTester playerMovement;
     private Animator playerAnimator;
     private Rigidbody playerRigidbody;
+    private Rigidbody rb; // Evil Man's Rigidbody
+    [Header("Positioning")]
+    [SerializeField] private float landingDistanceFromPlayer = 3f;
 
     void Start()
     {
@@ -43,6 +46,9 @@ public class EvilManController : MonoBehaviour
             playerAnimator = player.GetComponent<Animator>();
             playerRigidbody = player.GetComponent<Rigidbody>();
         }
+        rb = GetComponent<Rigidbody>();
+        if (rb != null)
+            rb.isKinematic = true;
     }
 
     public void StartDialogue()
@@ -86,7 +92,6 @@ public class EvilManController : MonoBehaviour
         yield return StartCoroutine(CartoonUppercut());
 
         // End sequence
-        SafeSetDialogueText("Pathetic.");
         yield return new WaitForSeconds(2f);
         SafeEndGame();
 
@@ -102,60 +107,103 @@ public class EvilManController : MonoBehaviour
         isPerformingSequence = false;
     }
 
+    public void JumpAtPlayer(Transform playerHead, float jumpForce, float forwardDistance)
+    {
+        // Ensure we have a rigidbody
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb == null) return;
+
+        // Get the direction the player is facing (flattened to horizontal plane)
+        Vector3 playerForward = playerHead.forward;
+        playerForward.y = 0f;
+        playerForward.Normalize();
+
+        // Target position: a fixed distance in front of the player�s head
+        Vector3 targetPosition = playerHead.position + playerForward * forwardDistance;
+
+        // Calculate jump direction (from current position to target)
+        Vector3 jumpDirection = (targetPosition - transform.position).normalized;
+
+        // Optional: tweak vertical arc strength
+        float verticalBoost = 1.2f; // increase this for a higher jump arc
+
+        // Final velocity
+        Vector3 jumpVelocity = new Vector3(jumpDirection.x, verticalBoost, jumpDirection.z) * jumpForce;
+
+        // Reset velocity before applying jump
+        rb.linearVelocity = Vector3.zero;
+        rb.AddForce(jumpVelocity, ForceMode.VelocityChange);
+    }
+
+
     private IEnumerator JumpInFrontOfPlayer()
     {
+        // Trigger jump animation and audio
         SafeTriggerAnimation("Jump");
         SafePlayAudio(jumpSound);
 
-        if (player != null)
+        // Disable root motion while using physics
+        if (animator != null)
+            animator.applyRootMotion = false;
+
+        if (rb != null)
         {
-            Vector3 startPos = transform.position;
-
-            // Ensure we land directly in front of where the player is *facing*
-            Vector3 targetPos = player.position + (player.forward.normalized * punchDistance);
-
-            // Make Evil Man look toward the player from the target position
-            Quaternion targetRotation = Quaternion.LookRotation(player.position - targetPos);
-
-            // Smooth parabolic arc
-            float moveTime = 1f;
-            float elapsed = 0f;
-            Vector3 midPoint = (startPos + targetPos) * 0.5f;
-            midPoint.y += jumpHeight;
-
-            while (elapsed < moveTime)
-            {
-                float t = elapsed / moveTime;
-                // Parabolic / bezier-like interpolation
-                Vector3 a = Vector3.Lerp(startPos, midPoint, t);
-                Vector3 b = Vector3.Lerp(midPoint, targetPos, t);
-                transform.position = Vector3.Lerp(a, b, t);
-
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, t);
-
-                elapsed += Time.deltaTime;
-                yield return null;
-            }
-
-            // Final snap to ensure exact placement/rotation
-            transform.position = targetPos;
-            transform.rotation = targetRotation;
-
-            // Make player face evil man without changing player's transform position (rotate only)
-            if (player != null)
-            {
-                Vector3 lookDir = (transform.position - player.position).normalized;
-                if (lookDir.sqrMagnitude > 0.001f)
-                    player.rotation = Quaternion.LookRotation(lookDir);
-            }
-
-            Debug.Log($"FINAL: Evil man at {transform.position}, Player at {player.position}, Distance: {Vector3.Distance(transform.position, player.position)}");
+            rb.isKinematic = false;
+            rb.linearVelocity = Vector3.zero;
         }
 
-        // Landing impact
+        if (player != null)
+        {
+            // --- Determine landing position ---
+
+            // Use player's forward direction (horizontal only)
+            Vector3 playerForward = player.forward;
+            playerForward.y = 0f;
+            playerForward.Normalize();
+
+            // Land in front of the player at a fixed distance
+            Vector3 targetPos = player.position + playerForward * landingDistanceFromPlayer;
+            targetPos.y = player.position.y; // align with ground height
+
+            // Face the player before jumping
+            transform.LookAt(new Vector3(player.position.x, transform.position.y, player.position.z));
+
+            // Calculate direction and jump velocity
+            Vector3 toTarget = (targetPos - transform.position).normalized;
+            float verticalBoost = 1.25f;
+            Vector3 jumpVelocity = new Vector3(toTarget.x, verticalBoost, toTarget.z) * jumpSpeed;
+
+            // Apply jump using physics
+            rb.AddForce(jumpVelocity, ForceMode.VelocityChange);
+
+            // Wait while the jump arc completes
+            yield return new WaitForSeconds(0.9f);
+
+            // Snap cleanly to the target position on landing
+            rb.isKinematic = true;
+            transform.position = targetPos;
+
+            // Face player again after landing
+            transform.LookAt(new Vector3(player.position.x, transform.position.y, player.position.z));
+
+            if (animator != null)
+                animator.applyRootMotion = true;
+
+            // Make player look back at Evil Man
+            Vector3 lookDir = (transform.position - player.position).normalized;
+            lookDir.y = 0f;
+            if (lookDir.sqrMagnitude > 0.001f)
+                player.rotation = Quaternion.LookRotation(lookDir);
+        }
+
+        // Add impact camera shake
         SafeCameraShake(0.4f, 0.3f);
+
+        // Small delay for dramatic timing
         yield return new WaitForSeconds(0.5f);
     }
+
+
 
     private IEnumerator SafeDialogue()
     {
@@ -195,7 +243,7 @@ public class EvilManController : MonoBehaviour
 
         // Move slightly closer for combat (in front of player)
         Vector3 originalPos = transform.position;
-        Vector3 combatPos = player.position + (transform.position - player.position).normalized * (punchDistance * 0.7f);
+        Vector3 combatPos = player.position + (transform.position - player.position).normalized * (punchDistance * 5.0f);
 
         float moveTime = 0.15f;
         float elapsed = 0f;
@@ -261,50 +309,56 @@ public class EvilManController : MonoBehaviour
         SafeSetDialogueText("THIS IS THE END!");
         yield return new WaitForSeconds(0.5f);
 
-        // Wind up animation
+        // Wind-up animation
         SafeTriggerAnimation("UppercutPrep");
         yield return new WaitForSeconds(0.35f);
 
-        // Re-enable physics for the player just before the final hit
+        // --- Enable full physics for launch ---
         if (playerRigidbody != null)
         {
             playerRigidbody.isKinematic = false;
             playerRigidbody.useGravity = true;
+            playerRigidbody.linearDamping = 0f;
+            playerRigidbody.angularDamping = 0.05f;
+            playerRigidbody.interpolation = RigidbodyInterpolation.None;
             playerRigidbody.linearVelocity = Vector3.zero;
             playerRigidbody.angularVelocity = Vector3.zero;
+            playerRigidbody.constraints = RigidbodyConstraints.None; // allow full spin
         }
 
-        // Final strike visuals & audio
+        // Final strike
         SafeTriggerAnimation("Punch2");
         SafeTriggerPlayerAnimation("Take Damage 2");
         SafePlayAudio(punchSound);
         SafePlayParticleSystem(punchVFX);
         SafePlayRandomAdditionalVFX();
-
         SafeCameraShake(1.2f, 0.8f);
 
-        // Apply a strong upward + backward force to launch the player
+        // --- Physics launch: upward + backward ---
         if (playerRigidbody != null)
         {
-            // Build a launch vector: mostly up + some back relative to evil man->player
+            // Get backward direction (away from Evil Man)
             Vector3 away = (player.position - transform.position).normalized;
-            Vector3 launch = Vector3.up * knockbackUpForce - away * knockbackForce;
 
-            // Apply using impulse; also a small extra velocity change to guarantee launch
+            // Strong arc: mostly up + backward
+            Vector3 launch = (Vector3.up * (knockbackUpForce * 1.2f)) + (away * (knockbackForce * 2.0f));
+
+            // Stop old velocity and apply the impulse
+            playerRigidbody.linearVelocity = Vector3.zero;
             playerRigidbody.AddForce(launch, ForceMode.Impulse);
-            playerRigidbody.AddForce(Vector3.up * (knockbackUpForce * 0.5f), ForceMode.VelocityChange);
 
-            // Add a little spin for cartoon effect (unfreeze rotation must be enabled in editor)
-            playerRigidbody.AddTorque(Random.insideUnitSphere * 10f, ForceMode.Impulse);
+            // Add heavy random spin
+            Vector3 spin = Random.insideUnitSphere * 80f;
+            playerRigidbody.AddTorque(spin, ForceMode.Impulse);
 
-            Debug.Log($"Applied uppercut launch: {launch}");
+            Debug.Log($"🚀 Player launched UP + BACK with force {launch}, spin {spin}");
         }
 
-        // Give a tiny moment for physics to react then stop player animations on the animated controller
-        yield return new WaitForSeconds(0.12f);
+        // Give physics a tiny moment to take control
+        yield return new WaitForSeconds(0.1f);
         StopPlayerAnimations();
 
-        // Evil man steps back dramatically
+        // Evil Man steps back dramatically
         Vector3 originalPos = transform.position;
         Vector3 backPos = originalPos - transform.forward * 2f;
         float moveTime = 0.4f;
@@ -317,16 +371,11 @@ public class EvilManController : MonoBehaviour
             yield return null;
         }
 
-        // Let the player fly for dramatic effect
-        yield return new WaitForSeconds(2f);
-
-        // Safety: stop drifting velocities if still present
-        if (playerRigidbody != null)
-        {
-            playerRigidbody.linearVelocity = Vector3.zero;
-            playerRigidbody.angularVelocity = Vector3.zero;
-        }
+        // Let the player fly off dramatically
+        yield return new WaitForSeconds(3f);
     }
+
+
 
     // Helper methods
     private void DisablePlayerMovement()
