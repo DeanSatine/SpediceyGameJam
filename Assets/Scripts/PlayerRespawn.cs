@@ -1,4 +1,5 @@
 using UnityEngine;
+using TMPro; // Make sure you have TextMeshPro installed
 
 public class PlayerRespawn : MonoBehaviour
 {
@@ -6,7 +7,11 @@ public class PlayerRespawn : MonoBehaviour
     public Transform spawnPoint;          // Where the player respawns
     public GameObject platformPrefab;     // Platform to spawn when the player "dies"
 
+    [Header("UI")]
+    public TextMeshProUGUI deathCounterText; // Assign in Inspector
+
     private CharacterController controller;
+    private int deathCount = 0;
 
     void Start()
     {
@@ -19,6 +24,8 @@ public class PlayerRespawn : MonoBehaviour
             defaultSpawn.transform.position = transform.position;
             spawnPoint = defaultSpawn.transform;
         }
+
+        UpdateUI();
     }
 
     void Update()
@@ -39,9 +46,21 @@ public class PlayerRespawn : MonoBehaviour
             Instantiate(platformPrefab, deathPosition, Quaternion.identity);
         }
 
+        // Increase death count and update UI
+        deathCount++;
+        UpdateUI();
+
         // Move player back to spawn point
-        controller.enabled = false;  // Temporarily disable to teleport cleanly
+        controller.enabled = false;
         transform.position = spawnPoint.position;
         controller.enabled = true;
+    }
+
+    void UpdateUI()
+    {
+        if (deathCounterText != null)
+        {
+            deathCounterText.text = "Deaths: " + deathCount;
+        }
     }
 }
