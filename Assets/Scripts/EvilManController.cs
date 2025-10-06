@@ -19,9 +19,13 @@ public class EvilManController : MonoBehaviour
     public ParticleSystem punchVFX;
     public ParticleSystem[] additionalPunchVFX;
 
-    [Header("Audio")]
-    public AudioSource jumpSound;
-    public AudioSource soulAbsorbSound;
+    [Header("Audio Clips")]
+    public AudioClip jumpClip;
+    public AudioClip landingClip;
+    public AudioClip punchClip;
+    public AudioClip launchClip;
+    public AudioClip soulAbsorbClip;
+
 
     [Header("Combat Settings")]
     public float punchDistance = 0.5f; // Distance in front of player
@@ -40,14 +44,13 @@ public class EvilManController : MonoBehaviour
     public ParticleSystem landingVFX; // NEW: Landing effect when evil man hits the ground
     public Transform playerHitPoint;
 
-    [Header("Audio")]  
-    public AudioSource landingSound; // NEW: Optional landing sound
     [Header("Final Attack VFX")]
     public ParticleSystem finalStrikeVFX;
     public float finalVFXTravelTime = 0.6f; // how long it takes to reach the player
     public float finalVFXOffsetY = 1.5f;    // vertical offset (center height)
     [Header("Player Hit Reaction VFX")]
     public ParticleSystem playerDamageEndVFX; // VFX that plays when player's hit animation finishes
+    private AudioSource audioSource;
 
     void Start()
     {
@@ -62,6 +65,18 @@ public class EvilManController : MonoBehaviour
         if (rb != null)
             rb.isKinematic = true;
         HideDialogueText();
+    }
+    void Awake()
+    {
+        audioSource = GetComponent<AudioSource>();
+        audioSource.playOnAwake = false;
+        audioSource.spatialBlend = 0f; // make it 2D (always audible)
+    }
+
+    void SafePlayClip(AudioClip clip, float volume = 1f)
+    {
+        if (clip == null) return;
+        audioSource.PlayOneShot(clip, volume);
     }
 
     public void StartDialogue()
@@ -170,7 +185,7 @@ public class EvilManController : MonoBehaviour
     {
         // Trigger jump animation and audio
         SafeTriggerAnimation("Jump");
-        SafePlayAudio(jumpSound);
+        SafePlayClip(jumpClip);
 
         // Disable root motion while using physics
         if (animator != null)
@@ -216,7 +231,7 @@ public class EvilManController : MonoBehaviour
             // Face player again after landing
             transform.LookAt(new Vector3(player.position.x, transform.position.y, player.position.z));
             SafePlayParticleSystemAt(landingVFX, transform.position, Quaternion.identity);
-            SafePlayAudio(landingSound);
+            SafePlayClip(landingClip);
             SafeCameraShake(0.4f, 0.3f);
 
             if (animator != null)
@@ -248,18 +263,18 @@ public class EvilManController : MonoBehaviour
 
     private IEnumerator SafeDialogue()
     {
-        SafeSetDialogueText("So... you made it.");
+        SafeSetDialogueText("You were told I would help you get home?");
         yield return new WaitForSeconds(2f);
 
         int corpseCount = CountCorpsesSafe();
 
         if (corpseCount == 1)
         {
-            SafeSetDialogueText("I see you left 1 corpse behind...");
+            SafeSetDialogueText("I see you left 1 corpse behind..");
         }
         else if (corpseCount > 1)
         {
-            SafeSetDialogueText($"I see you left {corpseCount} corpses behind...");
+            SafeSetDialogueText($"Sure, I can do that. I see you died {corpseCount} times. You don't appreciate your lives do you?");
         }
         else
         {
@@ -267,19 +282,19 @@ public class EvilManController : MonoBehaviour
         }
         yield return new WaitForSeconds(3f);
 
-        SafeSetDialogueText("Those souls belong to me now.");
+        SafeSetDialogueText("Let me appreciate them for you by taking those souls.");
         yield return new WaitForSeconds(2f);
 
         // Soul absorption
         SafePlayParticleSystem(soulAbsorbFX);
-        SafePlayAudio(soulAbsorbSound);
+        SafePlayClip(soulAbsorbClip);
         yield return new WaitForSeconds(3.5f);
     }
 
     private IEnumerator RapidCombatSequence()
     {
         int punchCount = Mathf.Max(CountCorpsesSafe(), 4); // at least 4 rapid hits
-        SafeSetDialogueText("Now face your punishment!");
+        SafeSetDialogueText("Let me send you home!");
         yield return new WaitForSeconds(0.6f);
 
         // Move slightly closer for combat (in front of player)
@@ -334,7 +349,7 @@ public class EvilManController : MonoBehaviour
         // Trigger the player's damage animation and effects
         SafeTriggerPlayerAnimation(playerDamage);
         StartCoroutine(PlayPlayerDamageVFXAfterAnimation(playerDamage)); // <-- added
-        SafePlayAudio(punchSound);
+        SafePlayClip(punchClip);
         if (playerHitPoint != null)
             SafePlayParticleSystemAt(punchVFX, playerHitPoint.position, playerHitPoint.rotation);
         else
@@ -351,7 +366,7 @@ public class EvilManController : MonoBehaviour
 
     private IEnumerator CartoonUppercut()
     {
-        SafeSetDialogueText("THIS IS THE END!");
+        SafeSetDialogueText("Have a nice flight!");
         yield return new WaitForSeconds(0.5f);
 
         // Wind-up animation
@@ -375,15 +390,12 @@ public class EvilManController : MonoBehaviour
         StartCoroutine(PlayFinalStrikeVFX());
 
         SafeTriggerAnimation("Punch2");
-
         SafeTriggerPlayerAnimation("Take Damage 2");
-
-        SafePlayAudio(punchSound);
+        SafePlayClip(punchClip);
         SafePlayParticleSystem(punchVFX);
         SafePlayRandomAdditionalVFX();
         SafeCameraShake(1.2f, 0.8f);
 
-        // --- Launch the CharacterController player (explosive) ---
         if (playerMovement != null)
         {
             CharacterController playerController = playerMovement.GetComponent<CharacterController>();
@@ -393,15 +405,18 @@ public class EvilManController : MonoBehaviour
                 away.y = 0f;
                 away.Normalize();
 
-                float launchForce = knockbackForce * 50f;    // stronger horizontal burst
-                float upwardForce = knockbackUpForce * 50f;  // powerful lift
-                float drag = 1.2f;                            // how quickly velocity slows
-                float gravity = -80f;                         // custom gravity for cinematic fall
+                float launchForce = knockbackForce * 50f;
+                float upwardForce = knockbackUpForce * 50f;
+                float drag = 1.2f;
+                float gravity = -80f;
 
+                // 🔊 Play launch Clip
+                SafePlayClip(launchClip);
+
+                // Launch coroutine
                 StartCoroutine(ExplosiveLaunch(playerController, away, launchForce, upwardForce, drag, gravity));
             }
         }
-
 
         // Give physics a tiny moment to take control
         yield return new WaitForSeconds(0.1f);
@@ -422,13 +437,20 @@ public class EvilManController : MonoBehaviour
 
         // Let the player fly off dramatically
         yield return new WaitForSeconds(3f);
-        // Fade to black after the final hit
+
+        // 🖤 Fade to black and load cutscene scene
         if (UIManager.Instance != null)
         {
             UIManager.Instance.FadeOutAndEnd();
+            UnityEngine.SceneManagement.SceneManager.LoadScene("Cutscene");
         }
 
+        // Wait for fade duration to complete
+        yield return new WaitForSeconds(2f);
+
+        // 🎬 Load the cutscene scene
     }
+
     private IEnumerator ExplosiveLaunch(CharacterController controller, Vector3 direction, float launchForce, float upwardForce, float drag, float gravity)
     {
         // Combine into a single velocity vector
@@ -473,7 +495,7 @@ public class EvilManController : MonoBehaviour
         Vector3 evilManCenter = transform.position + Vector3.up * 1.5f;
 
         // Play sound once
-        SafePlayAudio(soulAbsorbSound);
+        SafePlayClip(soulAbsorbClip);
 
         // Spawn main burst at EvilMan’s chest
         SafePlayParticleSystemAt(soulAbsorbFX, evilManCenter, Quaternion.identity);
@@ -667,15 +689,6 @@ public class EvilManController : MonoBehaviour
             animator.ResetTrigger("Punch2");
             animator.SetTrigger(triggerName);
             Debug.Log($"Evil man animation triggered: {triggerName}");
-        }
-    }
-
-
-    private void SafePlayAudio(AudioSource audioSource)
-    {
-        if (audioSource != null)
-        {
-            audioSource.Play();
         }
     }
 
