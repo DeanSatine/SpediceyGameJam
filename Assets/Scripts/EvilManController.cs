@@ -274,7 +274,7 @@ public class EvilManController : MonoBehaviour
         }
         else if (corpseCount > 1)
         {
-            SafeSetDialogueText($"Sure, I can do that. I see you died {corpseCount} times. You don't appreciate your lives do you?");
+            SafeSetDialogueText($"Sure, I can do that. I see you died {corpseCount} times. You're not very good at this.");
         }
         else
         {

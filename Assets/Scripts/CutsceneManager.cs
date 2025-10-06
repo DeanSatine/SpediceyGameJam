@@ -39,6 +39,10 @@ public class CutsceneManager : MonoBehaviour
         if (fadeImage != null)
             yield return StartCoroutine(FadeToBlack());
 
+        // Re-enable mouse before switching scenes
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+
         // Transition back to menu
         SceneManager.LoadScene(menuSceneName);
     }
